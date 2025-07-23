@@ -7,7 +7,7 @@ A GUI application built in Python that converts images to WEBP and/or AVIF forma
 ### macOS Users
 Download the latest version from the [Releases page](https://github.com/roljohntorralba/image-optimizer/releases/latest).
 
-- **Direct Download**: [Rols-Image-Optimizer-v1.0.0-macOS.dmg](https://github.com/roljohntorralba/image-optimizer/releases/download/v1.0.0/Rols-Image-Optimizer-v1.0.0-macOS.dmg)
+- **Latest Version (v1.2.0)**: [Rols-Image-Optimizer-v1.2.0-macOS.dmg](https://github.com/roljohntorralba/image-optimizer/releases/download/v1.2.0/Rols-Image-Optimizer-v1.2.0-macOS.dmg)
 
 Simply download the DMG file, open it, and drag "Rol's Image Optimizer.app" to your Applications folder.
 
@@ -22,7 +22,14 @@ For Windows and Linux users, please install from source (see Installation sectio
   - Set maximum width and/or height
   - Maintains aspect ratio
   - Never enlarges images (only reduces size)
-- **Quality Control**: Adjustable quality settings for both WEBP and AVIF outputs
+- **Quality Control**: 
+  - Adjustable quality settings for both WEBP and AVIF outputs
+  - Slider controls AND direct text input for precise values
+  - Auto-validation keeps values within 1-100 range
+- **Process Control**:
+  - 🛑 **Stop Button**: Cancel processing at any time during batch operations
+  - 📊 **Real-time Progress**: See completion percentage, processing rate, and ETA
+  - 🚀 **Multiprocessing**: 2-8x faster processing using all CPU cores
 - **Recursive Processing**: Processes images in subfolders while maintaining directory structure
 - **Safe Operation**: Ignores existing "webp" and "avif" folders to prevent infinite loops
 - **File Replacement**: Overwrites existing converted files when run again
