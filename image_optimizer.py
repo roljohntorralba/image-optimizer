@@ -139,6 +139,8 @@ class ImageOptimizer:
         # Progress tracking
         self.progress_queue = queue.Queue()
         self.is_processing = False
+        self.stop_processing = False
+        self.executor = None
         
         self.setup_ui()
         self.check_progress()
@@ -185,19 +187,33 @@ class ImageOptimizer:
         quality_frame = ttk.LabelFrame(main_frame, text="Quality Settings (1-100)", padding="10")
         quality_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
+        # WEBP Quality
         ttk.Label(quality_frame, text="WEBP Quality:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Scale(quality_frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=self.webp_quality, length=150).grid(row=0, column=1, padx=5)
-        self.webp_quality_label = ttk.Label(quality_frame, text="80")
-        self.webp_quality_label.grid(row=0, column=2, padx=5)
+        ttk.Scale(quality_frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=self.webp_quality, length=120).grid(row=0, column=1, padx=5)
+        webp_quality_entry = ttk.Entry(quality_frame, textvariable=self.webp_quality, width=5)
+        webp_quality_entry.grid(row=0, column=2, padx=5)
         
+        # AVIF Quality  
         ttk.Label(quality_frame, text="AVIF Quality:").grid(row=1, column=0, sticky=tk.W)
-        ttk.Scale(quality_frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=self.avif_quality, length=150).grid(row=1, column=1, padx=5)
-        self.avif_quality_label = ttk.Label(quality_frame, text="80")
-        self.avif_quality_label.grid(row=1, column=2, padx=5)
+        ttk.Scale(quality_frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=self.avif_quality, length=120).grid(row=1, column=1, padx=5)
+        avif_quality_entry = ttk.Entry(quality_frame, textvariable=self.avif_quality, width=5)
+        avif_quality_entry.grid(row=1, column=2, padx=5)
         
-        # Bind scale changes to update labels
-        self.webp_quality.trace_add('write', lambda *args: self.webp_quality_label.config(text=str(self.webp_quality.get())))
-        self.avif_quality.trace_add('write', lambda *args: self.avif_quality_label.config(text=str(self.avif_quality.get())))
+        # Add validation for quality values
+        def validate_quality(var, min_val=1, max_val=100):
+            def validator():
+                try:
+                    val = var.get()
+                    if val < min_val:
+                        var.set(min_val)
+                    elif val > max_val:
+                        var.set(max_val)
+                except:
+                    var.set(80)  # Default value
+            return validator
+        
+        self.webp_quality.trace_add('write', lambda *args: validate_quality(self.webp_quality)())
+        self.avif_quality.trace_add('write', lambda *args: validate_quality(self.avif_quality)())
         
         # Performance settings
         perf_frame = ttk.LabelFrame(main_frame, text="Performance Settings", padding="10")
@@ -214,8 +230,14 @@ class ImageOptimizer:
         self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # Process button
-        self.process_button = ttk.Button(main_frame, text="Start Optimization", command=self.start_processing)
-        self.process_button.grid(row=6, column=0, columnspan=3, pady=10)
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=6, column=0, columnspan=3, pady=10)
+        
+        self.process_button = ttk.Button(button_frame, text="Start Optimization", command=self.start_processing)
+        self.process_button.grid(row=0, column=0, padx=(0, 10))
+        
+        self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_processing_request, state="disabled")
+        self.stop_button.grid(row=0, column=1)
         
         # Log area
         log_frame = ttk.LabelFrame(main_frame, text="Processing Log", padding="10")
@@ -232,6 +254,16 @@ class ImageOptimizer:
         folder = filedialog.askdirectory()
         if folder:
             self.source_folder.set(folder)
+    
+    def stop_processing_request(self):
+        """Request to stop the current processing"""
+        self.stop_processing = True
+        self.log_message("Stop requested - finishing current images...")
+        self.stop_button.config(state="disabled")
+        
+        # If using multiprocessing, shutdown the executor
+        if self.executor:
+            self.executor.shutdown(wait=False)
             
     def log_message(self, message):
         """Add message to log area"""
@@ -253,7 +285,9 @@ class ImageOptimizer:
             return
             
         self.is_processing = True
+        self.stop_processing = False
         self.process_button.config(text="Processing...", state="disabled")
+        self.stop_button.config(state="normal")
         
         # Reset progress bar to determinate mode
         self.progress.config(mode='determinate', value=0)
@@ -333,13 +367,19 @@ class ImageOptimizer:
             processed_count = 0
             start_time = time.time()
             
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            self.executor = ProcessPoolExecutor(max_workers=max_workers)
+            try:
                 # Submit all tasks
-                future_to_file = {executor.submit(process_single_image, args): args[0] 
+                future_to_file = {self.executor.submit(process_single_image, args): args[0] 
                                  for args in process_args}
                 
                 # Process completed tasks
                 for future in as_completed(future_to_file):
+                    # Check if stop was requested
+                    if self.stop_processing:
+                        self.progress_queue.put(("log", "Processing stopped by user"))
+                        break
+                        
                     try:
                         result = future.result()
                         processed_count += 1
@@ -362,12 +402,20 @@ class ImageOptimizer:
                                 
                     except Exception as e:
                         self.progress_queue.put(("log", f"Error processing file: {str(e)}"))
+                        
+            finally:
+                self.executor.shutdown(wait=True)
+                self.executor = None
             
             elapsed_time = time.time() - start_time
             avg_rate = processed_count / elapsed_time if elapsed_time > 0 else 0
             
-            self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
-            self.progress_queue.put(("complete", ""))
+            if self.stop_processing:
+                self.progress_queue.put(("log", f"Processing stopped! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
+                self.progress_queue.put(("stopped", ""))
+            else:
+                self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
+                self.progress_queue.put(("complete", ""))
             
         except Exception as e:
             self.progress_queue.put(("error", f"Unexpected error: {str(e)}"))
@@ -422,6 +470,11 @@ class ImageOptimizer:
             start_time = time.time()
             
             for file_path in image_files:
+                # Check if stop was requested
+                if self.stop_processing:
+                    self.progress_queue.put(("log", "Processing stopped by user"))
+                    break
+                    
                 try:
                     relative_path = file_path.relative_to(source_path)
                     
@@ -479,8 +532,13 @@ class ImageOptimizer:
             
             elapsed_time = time.time() - start_time
             avg_rate = processed_count / elapsed_time if elapsed_time > 0 else 0
-            self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
-            self.progress_queue.put(("complete", ""))
+            
+            if self.stop_processing:
+                self.progress_queue.put(("log", f"Processing stopped! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
+                self.progress_queue.put(("stopped", ""))
+            else:
+                self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
+                self.progress_queue.put(("complete", ""))
             
         except Exception as e:
             self.progress_queue.put(("error", f"Unexpected error: {str(e)}"))
@@ -544,6 +602,10 @@ class ImageOptimizer:
                     self.log_message("All processing completed successfully!")
                     messagebox.showinfo("Complete", "Image optimization completed!")
                     self.finish_processing()
+                elif msg_type == "stopped":
+                    self.log_message("Processing was stopped by user")
+                    messagebox.showinfo("Stopped", "Image processing was stopped")
+                    self.finish_processing()
                     
         except queue.Empty:
             pass
@@ -554,7 +616,9 @@ class ImageOptimizer:
     def finish_processing(self):
         """Reset UI after processing is complete"""
         self.is_processing = False
+        self.stop_processing = False
         self.process_button.config(text="Start Optimization", state="normal")
+        self.stop_button.config(state="disabled")
         # Keep the progress bar showing completion
         # self.progress.config(mode='determinate', value=0)
     
