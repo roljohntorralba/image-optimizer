@@ -199,21 +199,7 @@ class ImageOptimizer:
         avif_quality_entry = ttk.Entry(quality_frame, textvariable=self.avif_quality, width=5)
         avif_quality_entry.grid(row=1, column=2, padx=5)
         
-        # Add validation for quality values
-        def validate_quality(var, min_val=1, max_val=100):
-            def validator():
-                try:
-                    val = var.get()
-                    if val < min_val:
-                        var.set(min_val)
-                    elif val > max_val:
-                        var.set(max_val)
-                except:
-                    var.set(80)  # Default value
-            return validator
-        
-        self.webp_quality.trace_add('write', lambda *args: validate_quality(self.webp_quality)())
-        self.avif_quality.trace_add('write', lambda *args: validate_quality(self.avif_quality)())
+        # Quality validation will be done at processing time instead of on every keystroke
         
         # Performance settings
         perf_frame = ttk.LabelFrame(main_frame, text="Performance Settings", padding="10")
@@ -271,6 +257,26 @@ class ImageOptimizer:
         self.log_text.see(tk.END)
         self.root.update_idletasks()
         
+    def validate_quality_values(self):
+        """Validate quality values before processing"""
+        errors = []
+        
+        try:
+            webp_qual = self.webp_quality.get()
+            if webp_qual < 1 or webp_qual > 100:
+                errors.append(f"WEBP quality must be between 1-100 (current: {webp_qual})")
+        except tk.TclError:
+            errors.append("WEBP quality must be a valid number between 1-100")
+            
+        try:
+            avif_qual = self.avif_quality.get()
+            if avif_qual < 1 or avif_qual > 100:
+                errors.append(f"AVIF quality must be between 1-100 (current: {avif_qual})")
+        except tk.TclError:
+            errors.append("AVIF quality must be a valid number between 1-100")
+            
+        return errors
+    
     def start_processing(self):
         """Start the image processing in a separate thread"""
         if self.is_processing:
@@ -282,6 +288,13 @@ class ImageOptimizer:
             
         if not self.convert_webp.get() and not self.convert_avif.get():
             messagebox.showerror("Error", "Please select at least one output format")
+            return
+            
+        # Validate quality values
+        quality_errors = self.validate_quality_values()
+        if quality_errors:
+            error_msg = "Invalid quality settings:\n" + "\n".join(quality_errors)
+            messagebox.showerror("Quality Error", error_msg)
             return
             
         self.is_processing = True
@@ -643,4 +656,6 @@ def main():
     app.run()
 
 if __name__ == "__main__":
+    # Ensure multiprocessing works correctly on all platforms
+    multiprocessing.freeze_support()
     main()
