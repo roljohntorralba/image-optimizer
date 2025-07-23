@@ -7,7 +7,7 @@ A GUI application built in Python that converts images to WEBP and/or AVIF forma
 ### macOS Users
 Download the latest version from the [Releases page](https://github.com/roljohntorralba/image-optimizer/releases/latest).
 
-- **Latest Version (v1.2.0)**: [Rols-Image-Optimizer-v1.2.0-macOS.dmg](https://github.com/roljohntorralba/image-optimizer/releases/download/v1.2.0/Rols-Image-Optimizer-v1.2.0-macOS.dmg)
+- **Latest Version (v1.2.1)**: [Rols-Image-Optimizer-v1.2.1-macOS.dmg](https://github.com/roljohntorralba/image-optimizer/releases/download/v1.2.1/Rols-Image-Optimizer-v1.2.1-macOS.dmg)
 
 Simply download the DMG file, open it, and drag "Rol's Image Optimizer.app" to your Applications folder.
 
