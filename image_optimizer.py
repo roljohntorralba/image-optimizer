@@ -13,6 +13,108 @@ from PIL import Image, ImageOps
 import threading
 import queue
 import time
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import functools
+
+def process_single_image(args):
+    """Process a single image - designed to work with multiprocessing"""
+    try:
+        file_path, source_path, settings = args
+        
+        # Unpack settings
+        webp_folder = settings['webp_folder']
+        avif_folder = settings['avif_folder']
+        convert_webp = settings['convert_webp']
+        convert_avif = settings['convert_avif']
+        webp_quality = settings['webp_quality']
+        avif_quality = settings['avif_quality']
+        max_width = settings['max_width']
+        max_height = settings['max_height']
+        
+        relative_path = file_path.relative_to(source_path)
+        results = {'file': relative_path, 'success': True, 'messages': []}
+        
+        # Open and process image with optimization
+        with Image.open(file_path) as img:
+            # Optimize loading for large images
+            img.load()
+            
+            # Convert to RGB if necessary (optimized)
+            if img.mode in ('RGBA', 'LA'):
+                # Create white background only once
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1])
+                img = background
+            elif img.mode == 'P':
+                # Handle palette mode
+                img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Resize if needed
+            img = resize_image_standalone(img, max_width, max_height)
+            
+            # Save formats
+            if convert_webp:
+                webp_path = webp_folder / relative_path.with_suffix('.webp')
+                webp_path.parent.mkdir(parents=True, exist_ok=True)
+                # Use optimized save parameters
+                img.save(webp_path, 'WEBP', quality=webp_quality, optimize=True, method=6)
+                results['messages'].append(f"Saved WEBP: {webp_path.relative_to(source_path)}")
+            
+            if convert_avif:
+                avif_path = avif_folder / relative_path.with_suffix('.avif')
+                avif_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    # Use optimized AVIF parameters
+                    img.save(avif_path, 'AVIF', quality=avif_quality, optimize=True, speed=6)
+                    results['messages'].append(f"Saved AVIF: {avif_path.relative_to(source_path)}")
+                except Exception as e:
+                    results['messages'].append(f"Failed to save AVIF for {relative_path}: {str(e)}")
+        
+        return results
+        
+    except Exception as e:
+        return {'file': relative_path, 'success': False, 'messages': [f"Error processing {relative_path}: {str(e)}"]}
+
+def resize_image_standalone(img, max_width, max_height):
+    """Standalone resize function for multiprocessing"""
+    original_width, original_height = img.size
+    max_w = max_width if max_width > 0 else None
+    max_h = max_height if max_height > 0 else None
+    
+    # If no limits set, return original
+    if not max_w and not max_h:
+        return img
+    
+    # Don't enlarge images
+    if max_w and original_width <= max_w and max_h and original_height <= max_h:
+        return img
+    if max_w and not max_h and original_width <= max_w:
+        return img
+    if max_h and not max_w and original_height <= max_h:
+        return img
+    
+    # Calculate new dimensions
+    if max_w and max_h:
+        # Both dimensions specified - maintain aspect ratio
+        ratio = min(max_w / original_width, max_h / original_height)
+    elif max_w:
+        # Only width specified
+        ratio = max_w / original_width
+    else:
+        # Only height specified
+        ratio = max_h / original_height
+    
+    # Don't enlarge
+    if ratio >= 1:
+        return img
+        
+    new_width = int(original_width * ratio)
+    new_height = int(original_height * ratio)
+    
+    return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
 class ImageOptimizer:
     def __init__(self):
@@ -29,6 +131,10 @@ class ImageOptimizer:
         self.max_height = tk.IntVar(value=0)  # 0 means no limit
         self.webp_quality = tk.IntVar(value=80)
         self.avif_quality = tk.IntVar(value=80)
+        
+        # Performance settings
+        self.use_multiprocessing = tk.BooleanVar(value=True)
+        self.max_workers = tk.IntVar(value=min(8, multiprocessing.cpu_count()))
         
         # Progress tracking
         self.progress_queue = queue.Queue()
@@ -93,20 +199,30 @@ class ImageOptimizer:
         self.webp_quality.trace_add('write', lambda *args: self.webp_quality_label.config(text=str(self.webp_quality.get())))
         self.avif_quality.trace_add('write', lambda *args: self.avif_quality_label.config(text=str(self.avif_quality.get())))
         
+        # Performance settings
+        perf_frame = ttk.LabelFrame(main_frame, text="Performance Settings", padding="10")
+        perf_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        
+        ttk.Checkbutton(perf_frame, text="Use Multiprocessing (Faster)", variable=self.use_multiprocessing).grid(row=0, column=0, sticky=tk.W)
+        
+        ttk.Label(perf_frame, text="Max Workers:").grid(row=0, column=1, sticky=tk.W, padx=(20, 5))
+        ttk.Spinbox(perf_frame, from_=1, to=16, width=5, textvariable=self.max_workers).grid(row=0, column=2)
+        ttk.Label(perf_frame, text=f"(CPU cores: {multiprocessing.cpu_count()})").grid(row=0, column=3, sticky=tk.W, padx=(5, 0))
+        
         # Progress bar
-        self.progress = ttk.Progressbar(main_frame, mode='indeterminate')
-        self.progress.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        self.progress = ttk.Progressbar(main_frame, mode='determinate')
+        self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # Process button
         self.process_button = ttk.Button(main_frame, text="Start Optimization", command=self.start_processing)
-        self.process_button.grid(row=5, column=0, columnspan=3, pady=10)
+        self.process_button.grid(row=6, column=0, columnspan=3, pady=10)
         
         # Log area
         log_frame = ttk.LabelFrame(main_frame, text="Processing Log", padding="10")
-        log_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        log_frame.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        main_frame.rowconfigure(6, weight=1)
+        main_frame.rowconfigure(7, weight=1)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, width=70, height=15)
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -138,17 +254,126 @@ class ImageOptimizer:
             
         self.is_processing = True
         self.process_button.config(text="Processing...", state="disabled")
-        self.progress.config(mode='indeterminate')
-        self.progress.start()
+        
+        # Reset progress bar to determinate mode
+        self.progress.config(mode='determinate', value=0)
         self.log_text.delete(1.0, tk.END)
         
         # Start processing thread
-        thread = threading.Thread(target=self.process_images)
+        if self.use_multiprocessing.get():
+            thread = threading.Thread(target=self.process_images_multiprocessed)
+        else:
+            thread = threading.Thread(target=self.process_images_single)
         thread.daemon = True
         thread.start()
         
-    def process_images(self):
-        """Process all images in the source folder"""
+    def process_images_multiprocessed(self):
+        """Process all images using multiprocessing for better performance"""
+        try:
+            source_path = Path(self.source_folder.get())
+            
+            if not source_path.exists():
+                self.progress_queue.put(("error", "Source folder does not exist"))
+                return
+                
+            # Supported image formats
+            supported_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'}
+            
+            # Create output folders
+            webp_folder = source_path / "webp"
+            avif_folder = source_path / "avif"
+            
+            convert_webp = self.convert_webp.get()
+            convert_avif = self.convert_avif.get()
+            
+            if convert_webp:
+                webp_folder.mkdir(exist_ok=True)
+                self.progress_queue.put(("log", f"Created WEBP output folder"))
+                
+            if convert_avif:
+                avif_folder.mkdir(exist_ok=True)
+                self.progress_queue.put(("log", f"Created AVIF output folder"))
+            
+            # Find all image files
+            image_files = []
+            for file_path in source_path.rglob("*"):
+                if (file_path.is_file() and 
+                    file_path.suffix.lower() in supported_formats and
+                    "webp" not in file_path.parts and 
+                    "avif" not in file_path.parts):
+                    image_files.append(file_path)
+            
+            total_files = len(image_files)
+            self.progress_queue.put(("log", f"Found {total_files} image files to process"))
+            self.progress_queue.put(("progress_total", total_files))
+            
+            if not image_files:
+                self.progress_queue.put(("error", "No supported image files found"))
+                return
+            
+            # Prepare settings for multiprocessing
+            settings = {
+                'webp_folder': webp_folder,
+                'avif_folder': avif_folder,
+                'convert_webp': convert_webp,
+                'convert_avif': convert_avif,
+                'webp_quality': self.webp_quality.get(),
+                'avif_quality': self.avif_quality.get(),
+                'max_width': self.max_width.get(),
+                'max_height': self.max_height.get(),
+            }
+            
+            # Prepare arguments for multiprocessing
+            process_args = [(file_path, source_path, settings) for file_path in image_files]
+            
+            # Use multiprocessing
+            max_workers = min(self.max_workers.get(), len(image_files))
+            self.progress_queue.put(("log", f"Using {max_workers} worker processes"))
+            
+            processed_count = 0
+            start_time = time.time()
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_file = {executor.submit(process_single_image, args): args[0] 
+                                 for args in process_args}
+                
+                # Process completed tasks
+                for future in as_completed(future_to_file):
+                    try:
+                        result = future.result()
+                        processed_count += 1
+                        
+                        # Update progress
+                        progress_percent = (processed_count / total_files) * 100
+                        self.progress_queue.put(("progress", progress_percent))
+                        
+                        # Log messages (less frequently to avoid UI lag)
+                        if processed_count % 5 == 0 or processed_count <= 10:
+                            elapsed = time.time() - start_time
+                            rate = processed_count / elapsed if elapsed > 0 else 0
+                            eta = (total_files - processed_count) / rate if rate > 0 else 0
+                            self.progress_queue.put(("log", f"Progress: {processed_count}/{total_files} ({progress_percent:.1f}%) - {rate:.1f} img/sec - ETA: {eta:.0f}s"))
+                        
+                        # Log individual file messages for errors or first few files
+                        if not result['success'] or processed_count <= 5:
+                            for message in result['messages']:
+                                self.progress_queue.put(("log", message))
+                                
+                    except Exception as e:
+                        self.progress_queue.put(("log", f"Error processing file: {str(e)}"))
+            
+            elapsed_time = time.time() - start_time
+            avg_rate = processed_count / elapsed_time if elapsed_time > 0 else 0
+            
+            self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
+            self.progress_queue.put(("complete", ""))
+            
+        except Exception as e:
+            self.progress_queue.put(("error", f"Unexpected error: {str(e)}"))
+    
+    def process_images_single(self):
+        """Original single-threaded processing (fallback)"""
         try:
             source_path = Path(self.source_folder.get())
             
@@ -165,11 +390,11 @@ class ImageOptimizer:
             
             if self.convert_webp.get():
                 webp_folder.mkdir(exist_ok=True)
-                self.progress_queue.put(("log", f"Created WEBP output folder: {webp_folder}"))
+                self.progress_queue.put(("log", f"Created WEBP output folder"))
                 
             if self.convert_avif.get():
                 avif_folder.mkdir(exist_ok=True)
-                self.progress_queue.put(("log", f"Created AVIF output folder: {avif_folder}"))
+                self.progress_queue.put(("log", f"Created AVIF output folder"))
             
             # Find all image files
             image_files = []
@@ -180,23 +405,25 @@ class ImageOptimizer:
                     "avif" not in file_path.parts):
                     image_files.append(file_path)
             
-            self.progress_queue.put(("log", f"Found {len(image_files)} image files to process"))
+            total_files = len(image_files)
+            self.progress_queue.put(("log", f"Found {total_files} image files to process"))
+            self.progress_queue.put(("progress_total", total_files))
             
             if not image_files:
                 self.progress_queue.put(("error", "No supported image files found"))
                 return
             
-            # Process each image with optimizations
+            # Process each image with optimizations (single-threaded)
             processed_count = 0
             webp_quality = self.webp_quality.get()
             avif_quality = self.avif_quality.get()
             convert_webp = self.convert_webp.get()
             convert_avif = self.convert_avif.get()
+            start_time = time.time()
             
             for file_path in image_files:
                 try:
                     relative_path = file_path.relative_to(source_path)
-                    self.progress_queue.put(("log", f"Processing: {relative_path}"))
                     
                     # Open and process image with optimization
                     with Image.open(file_path) as img:
@@ -218,13 +445,12 @@ class ImageOptimizer:
                         # Resize if needed (once for both formats)
                         img = self.resize_image(img)
                         
-                        # Save formats in parallel concept (sequential but optimized)
+                        # Save formats
                         if convert_webp:
                             webp_path = webp_folder / relative_path.with_suffix('.webp')
                             webp_path.parent.mkdir(parents=True, exist_ok=True)
                             # Use optimized save parameters
                             img.save(webp_path, 'WEBP', quality=webp_quality, optimize=True, method=6)
-                            self.progress_queue.put(("log", f"Saved WEBP: {webp_path.relative_to(source_path)}"))
                         
                         if convert_avif:
                             avif_path = avif_folder / relative_path.with_suffix('.avif')
@@ -232,20 +458,28 @@ class ImageOptimizer:
                             try:
                                 # Use optimized AVIF parameters
                                 img.save(avif_path, 'AVIF', quality=avif_quality, optimize=True, speed=6)
-                                self.progress_queue.put(("log", f"Saved AVIF: {avif_path.relative_to(source_path)}"))
                             except Exception as e:
                                 self.progress_queue.put(("log", f"Failed to save AVIF for {relative_path}: {str(e)}"))
                     
                     processed_count += 1
                     
+                    # Update progress
+                    progress_percent = (processed_count / total_files) * 100
+                    self.progress_queue.put(("progress", progress_percent))
+                    
                     # Update progress periodically to keep UI responsive
-                    if processed_count % 10 == 0:
-                        self.progress_queue.put(("log", f"Progress: {processed_count}/{len(image_files)} images processed"))
+                    if processed_count % 5 == 0:
+                        elapsed = time.time() - start_time
+                        rate = processed_count / elapsed if elapsed > 0 else 0
+                        eta = (total_files - processed_count) / rate if rate > 0 else 0
+                        self.progress_queue.put(("log", f"Progress: {processed_count}/{total_files} - {rate:.1f} img/sec - ETA: {eta:.0f}s"))
                     
                 except Exception as e:
                     self.progress_queue.put(("log", f"Error processing {relative_path}: {str(e)}"))
             
-            self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed."))
+            elapsed_time = time.time() - start_time
+            avg_rate = processed_count / elapsed_time if elapsed_time > 0 else 0
+            self.progress_queue.put(("log", f"Processing complete! {processed_count} images processed in {elapsed_time:.1f}s (avg: {avg_rate:.1f} img/sec)"))
             self.progress_queue.put(("complete", ""))
             
         except Exception as e:
@@ -297,11 +531,16 @@ class ImageOptimizer:
                 
                 if msg_type == "log":
                     self.log_message(message)
+                elif msg_type == "progress_total":
+                    self.progress.config(maximum=message)
+                elif msg_type == "progress":
+                    self.progress.config(value=message)
                 elif msg_type == "error":
                     self.log_message(f"ERROR: {message}")
                     messagebox.showerror("Error", message)
                     self.finish_processing()
                 elif msg_type == "complete":
+                    self.progress.config(value=self.progress.cget("maximum"))
                     self.log_message("All processing completed successfully!")
                     messagebox.showinfo("Complete", "Image optimization completed!")
                     self.finish_processing()
@@ -310,14 +549,14 @@ class ImageOptimizer:
             pass
         
         # Schedule next check
-        self.root.after(100, self.check_progress)
+        self.root.after(50, self.check_progress)  # More frequent updates for better progress display
     
     def finish_processing(self):
         """Reset UI after processing is complete"""
         self.is_processing = False
         self.process_button.config(text="Start Optimization", state="normal")
-        self.progress.stop()
-        self.progress.config(mode='determinate', value=0)
+        # Keep the progress bar showing completion
+        # self.progress.config(mode='determinate', value=0)
     
     def run(self):
         """Start the application"""
