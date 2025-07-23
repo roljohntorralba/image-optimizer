@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rols-image-optimizer"
+version = "1.0.0"
+description = "A GUI application for optimizing images to WEBP and AVIF formats"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Rol John Torralba", email = "roljohntorralba@example.com"}
+]
+maintainers = [
+    {name = "Rol John Torralba", email = "roljohntorralba@example.com"}
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+keywords = ["image", "optimization", "webp", "avif", "converter", "gui"]
+requires-python = ">=3.8"
+dependencies = [
+    "pillow>=10.0.0",
+    "pillow-avif-plugin>=1.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.0.0",
+    "setuptools>=65.0.0",
+    "wheel>=0.38.0",
+]
+
+[project.scripts]
+rols-image-optimizer = "image_optimizer:main"
+
+[project.gui-scripts]
+rols-image-optimizer-gui = "image_optimizer:main"
+
+[project.urls]
+Homepage = "https://github.com/roljohntorralba/image-optimizer"
+Repository = "https://github.com/roljohntorralba/image-optimizer"
+Issues = "https://github.com/roljohntorralba/image-optimizer/issues"
+Changelog = "https://github.com/roljohntorralba/image-optimizer/releases"
+
+[tool.setuptools]
+py-modules = ["image_optimizer"]
