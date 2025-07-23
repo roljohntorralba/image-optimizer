@@ -68,13 +68,13 @@ app = BUNDLE(
     name='Rols Image Optimizer.app',
     icon=None,
     bundle_identifier='com.roljohntorralba.image-optimizer',
-    version='1.2.0',
+    version='1.2.1',
     info_plist={
         'CFBundleName': 'Rols Image Optimizer',
         'CFBundleDisplayName': 'Rol\'s Image Optimizer',
         'CFBundleIdentifier': 'com.roljohntorralba.image-optimizer',
-        'CFBundleVersion': '1.2.0',
-        'CFBundleShortVersionString': '1.2.0',
+        'CFBundleVersion': '1.2.1',
+        'CFBundleShortVersionString': '1.2.1',
         'NSHighResolutionCapable': True,
         'LSApplicationCategoryType': 'public.app-category.photography',
         'CFBundleDocumentTypes': [

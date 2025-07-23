@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rols-image-optimizer"
-version = "1.2.0"
+version = "1.2.1"
 description = "A GUI application for optimizing images to WEBP and AVIF formats"
 readme = "README.md"
 license = {file = "LICENSE"}
